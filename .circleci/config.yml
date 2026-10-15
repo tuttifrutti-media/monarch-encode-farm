@@ -1,0 +1,119 @@
+# monarch-encode-farm — CircleCI mirror of .github/workflows/encode-segment.yml
+#
+# One job = one segment: download the master's Drive parts (in order),
+# reassemble, sha256-verify, encode the segment (libx264 + AAC), ffprobe it,
+# and store it as a build artifact. Triggered via the CircleCI API with
+# pipeline parameters (same names/defaults as the GitHub workflow inputs).
+# FB 720p profile is the default; override per dispatch for other profiles.
+version: 2.1
+
+parameters:
+  parts:
+    type: string
+    description: "Space-separated direct-download URLs of the master parts, in order"
+    default: ""
+  sha256:
+    type: string
+    description: "Expected sha256 of the reassembled master"
+    default: ""
+  start:
+    type: string
+    description: "Segment start seconds"
+    default: "0"
+  dur:
+    type: string
+    description: "Segment duration seconds"
+    default: "0"
+  out_name:
+    type: string
+    description: "Output segment filename"
+    default: "segment.mp4"
+  scale:
+    type: string
+    description: "Output scale WxH (default = FB 720p profile)"
+    default: "1280:720"
+  crf:
+    type: string
+    description: "libx264 CRF"
+    default: "34"
+  preset:
+    type: string
+    description: "libx264 preset"
+    default: "medium"
+  maxrate:
+    type: string
+    description: "libx264 maxrate"
+    default: "800k"
+  bufsize:
+    type: string
+    description: "libx264 bufsize"
+    default: "1600k"
+  abitrate:
+    type: string
+    description: "AAC audio bitrate"
+    default: "96k"
+
+jobs:
+  encode-segment:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: medium
+    environment:
+      PARTS: << pipeline.parameters.parts >>
+      EXPECTED_SHA256: << pipeline.parameters.sha256 >>
+      SEG_START: << pipeline.parameters.start >>
+      SEG_DUR: << pipeline.parameters.dur >>
+      SEG_SCALE: << pipeline.parameters.scale >>
+      SEG_CRF: << pipeline.parameters.crf >>
+      SEG_PRESET: << pipeline.parameters.preset >>
+      SEG_MAXRATE: << pipeline.parameters.maxrate >>
+      SEG_BUFSIZE: << pipeline.parameters.bufsize >>
+      SEG_ABITRATE: << pipeline.parameters.abitrate >>
+      SEG_OUT: << pipeline.parameters.out_name >>
+    steps:
+      - run:
+          name: Install ffmpeg
+          command: |
+            if ! command -v ffmpeg >/dev/null 2>&1; then
+              sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+            fi
+            ffmpeg -version | head -1
+      - run:
+          name: Fetch and reassemble master
+          command: |
+            set -euo pipefail
+            mkdir -p parts
+            i=0
+            for u in $PARTS; do
+              printf -v n "%03d" $i
+              curl -L --fail --retry 3 -o "parts/$n" "$u"
+              i=$((i+1))
+            done
+            cat parts/* > master.mp4
+            echo "$EXPECTED_SHA256  master.mp4" | sha256sum -c -
+            ffprobe -v error -show_entries format=duration -of csv=p=0 master.mp4
+      - run:
+          name: Encode segment
+          command: |
+            set -euo pipefail
+            ffmpeg -y -v error -ss "$SEG_START" -i master.mp4 -t "$SEG_DUR" \
+              -vf "scale=$SEG_SCALE" -c:v libx264 -preset "$SEG_PRESET" -crf "$SEG_CRF" -maxrate "$SEG_MAXRATE" -bufsize "$SEG_BUFSIZE" \
+              -c:a aac -b:a "$SEG_ABITRATE" "$SEG_OUT"
+            ffprobe -v error -show_entries format=duration -of csv=p=0 "$SEG_OUT"
+      - persist_to_workspace:
+          root: .
+          paths:
+            - << pipeline.parameters.out_name >>
+      - store_artifacts:
+          path: << pipeline.parameters.out_name >>
+          destination: segment
+
+workflows:
+  encode-segment:
+    # Only run when dispatched with real parameters (API trigger); plain
+    # pushes with empty defaults must not fire a doomed encode.
+    when:
+      not:
+        equal: ["", << pipeline.parameters.parts >>]
+    jobs:
+      - encode-segment
