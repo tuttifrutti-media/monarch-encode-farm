@@ -33,8 +33,9 @@ steps:
       - |
         set -euo pipefail
         mkdir -p parts
+        read -ra URLS <<< "$_PARTS"
         i=0
-        for u in $_PARTS; do
+        for u in "$${URLS[@]}"; do
           printf -v name "parts/part-%03d" "$$i"
           curl -L --fail -o "$$name" "$$u"
           i=$$((i+1))
