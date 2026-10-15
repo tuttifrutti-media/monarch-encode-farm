@@ -1,0 +1,102 @@
+# monarch-encode-farm — Azure Pipelines mirror of .github/workflows/encode-segment.yml
+#
+# One job = one segment: download the master's part URLs (in order),
+# reassemble, sha256-verify, encode the segment (libx264 + AAC), ffprobe it,
+# and publish it as a pipeline artifact. Run manually with parameters
+# (same names/defaults as the GitHub workflow inputs).
+
+trigger: none
+
+parameters:
+  - name: parts
+    type: string
+    default: ' '
+    displayName: 'Space-separated direct-download URLs of the master parts, in order'
+  - name: sha256
+    type: string
+    default: ' '
+    displayName: 'Expected sha256 of the reassembled master'
+  - name: start
+    type: string
+    default: '0'
+    displayName: 'Segment start seconds'
+  - name: dur
+    type: string
+    default: '60'
+    displayName: 'Segment duration seconds'
+  - name: out_name
+    type: string
+    default: 'segment.mp4'
+    displayName: 'Output segment filename'
+  - name: scale
+    type: string
+    default: '1280:720'
+    displayName: 'Output scale WxH (FB 720p profile default)'
+  - name: crf
+    type: string
+    default: '34'
+    displayName: 'libx264 CRF'
+  - name: preset
+    type: string
+    default: 'medium'
+    displayName: 'libx264 preset'
+  - name: maxrate
+    type: string
+    default: '800k'
+    displayName: 'libx264 maxrate'
+  - name: bufsize
+    type: string
+    default: '1600k'
+    displayName: 'libx264 bufsize'
+  - name: abitrate
+    type: string
+    default: '96k'
+    displayName: 'AAC audio bitrate'
+
+pool:
+  vmImage: ubuntu-latest
+
+jobs:
+  - job: encode
+    timeoutInMinutes: 120
+    steps:
+      - script: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        displayName: 'Install ffmpeg'
+      - script: |
+          set -euo pipefail
+          mkdir -p parts
+          i=0
+          for u in $PARTS; do
+            printf -v n "%03d" $i
+            curl -L --fail --retry 3 -o "parts/$n" "$u"
+            i=$((i+1))
+          done
+          cat parts/* > master.mp4
+          echo "${{ parameters.sha256 }}  master.mp4" | sha256sum -c -
+          ffprobe -v error -show_entries format=duration -of csv=p=0 master.mp4
+        displayName: 'Fetch and reassemble master'
+        env:
+          PARTS: ${{ parameters.parts }}
+      - script: |
+          set -euo pipefail
+          ffmpeg -y -v error -ss "$SEG_START" -i master.mp4 -t "$SEG_DUR" \
+            -vf "scale=$SEG_SCALE" -c:v libx264 -preset "$SEG_PRESET" -crf "$SEG_CRF" -maxrate "$SEG_MAXRATE" -bufsize "$SEG_BUFSIZE" \
+            -c:a aac -b:a "$SEG_ABITRATE" "$SEG_OUT"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 "$SEG_OUT"
+        displayName: 'Encode segment'
+        env:
+          SEG_START: ${{ parameters.start }}
+          SEG_DUR: ${{ parameters.dur }}
+          SEG_SCALE: ${{ parameters.scale }}
+          SEG_CRF: ${{ parameters.crf }}
+          SEG_PRESET: ${{ parameters.preset }}
+          SEG_MAXRATE: ${{ parameters.maxrate }}
+          SEG_BUFSIZE: ${{ parameters.bufsize }}
+          SEG_ABITRATE: ${{ parameters.abitrate }}
+          SEG_OUT: ${{ parameters.out_name }}
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish segment artifact'
+        inputs:
+          targetPath: ${{ parameters.out_name }}
+          artifact: ${{ parameters.out_name }}
