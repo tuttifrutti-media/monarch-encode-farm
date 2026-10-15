@@ -23,11 +23,13 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Fetch and reassemble master
+        env:
+          PARTS: ${{ inputs.parts }}
         run: |
           set -euo pipefail
           mkdir -p parts
           i=0
-          for u in ${{ inputs.parts }}; do
+          for u in $PARTS; do
             printf -v n "%03d" $i
             curl -L --fail --retry 3 -o "parts/$n" "$u"
             i=$((i+1))
