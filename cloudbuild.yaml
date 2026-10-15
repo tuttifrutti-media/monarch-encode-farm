@@ -1,0 +1,60 @@
+# monarch-encode-farm — Google Cloud Build mirror of .github/workflows/encode-segment.yml
+# One build = one segment: download the master's Drive parts (in order),
+# reassemble, sha256-verify, encode the segment (libx264 + AAC), ffprobe it,
+# and store it as a build artifact in gs://$_BUCKET.
+# FREE-TIER DISCIPLINE: machineType is pinned to E2_MEDIUM (the 120 free
+# build-min/day pool). Never raise it — bigger machines are billed.
+# Trigger with substitutions (same names as the GitHub workflow inputs):
+#   _PARTS (space-separated URLs, in order)  _SHA256  _START  _DUR  _OUT
+#   _SCALE _CRF _PRESET _MAXRATE _BUFSIZE _ABITRATE  _BUCKET
+substitutions:
+  _PARTS: ''
+  _SHA256: ''
+  _START: '0'
+  _DUR: '60'
+  _OUT: 'segment.mp4'
+  _SCALE: '1280:720'
+  _CRF: '34'
+  _PRESET: 'medium'
+  _MAXRATE: '800k'
+  _BUFSIZE: '1600k'
+  _ABITRATE: '96k'
+  _BUCKET: 'monarch-encode-farm-artifacts'
+options:
+  machineType: 'E2_MEDIUM'
+timeout: '3600s'
+steps:
+  - id: fetch-parts
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        mkdir -p parts
+        i=0
+        for u in $_PARTS; do
+          printf -v name "parts/part-%03d" "$$i"
+          curl -L --fail -o "$$name" "$$u"
+          i=$$((i+1))
+        done
+        ls -la parts/
+  - id: encode
+    name: 'jrottenberg/ffmpeg:4.4-ubuntu'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        cat parts/part-* > master.mp4
+        echo "$_SHA256  master.mp4" | sha256sum -c -
+        ffmpeg -y -ss $_START -i master.mp4 -t $_DUR \
+          -vf scale=$_SCALE -c:v libx264 -preset $_PRESET -crf $_CRF \
+          -maxrate $_MAXRATE -bufsize $_BUFSIZE \
+          -c:a aac -b:a $_ABITRATE $_OUT
+        ffprobe -v error -show_format -show_streams $_OUT
+artifacts:
+  objects:
+    location: 'gs://$_BUCKET/artifacts/'
+    paths:
+      - '$_OUT'
