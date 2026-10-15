@@ -12,6 +12,10 @@ parameters:
     type: string
     description: "Space-separated direct-download URLs of the master parts, in order"
     default: ""
+  parts_url:
+    type: string
+    description: "URL of a text file listing the part URLs, one per line (used when parts would exceed CircleCI's 512-char parameter cap)"
+    default: ""
   sha256:
     type: string
     description: "Expected sha256 of the reassembled master"
@@ -60,6 +64,7 @@ jobs:
     resource_class: medium
     environment:
       PARTS: << pipeline.parameters.parts >>
+      PARTS_URL: << pipeline.parameters.parts_url >>
       EXPECTED_SHA256: << pipeline.parameters.sha256 >>
       SEG_START: << pipeline.parameters.start >>
       SEG_DUR: << pipeline.parameters.dur >>
@@ -82,6 +87,9 @@ jobs:
           name: Fetch and reassemble master
           command: |
             set -euo pipefail
+            if [ -z "$PARTS" ] && [ -n "$PARTS_URL" ]; then
+              PARTS=$(curl -fsSL --retry 3 "$PARTS_URL" | tr '\n' ' ')
+            fi
             mkdir -p parts
             i=0
             for u in $PARTS; do
@@ -113,7 +121,10 @@ workflows:
     # Only run when dispatched with real parameters (API trigger); plain
     # pushes with empty defaults must not fire a doomed encode.
     when:
-      not:
-        equal: ["", << pipeline.parameters.parts >>]
+      or:
+        - not:
+            equal: ["", << pipeline.parameters.parts >>]
+        - not:
+            equal: ["", << pipeline.parameters.parts_url >>]
     jobs:
       - encode-segment
