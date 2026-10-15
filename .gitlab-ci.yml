@@ -1,0 +1,53 @@
+# monarch-encode-farm — GitLab CI mirror of .github/workflows/encode-segment.yml
+# One job = one segment: download the master's Drive parts (in order),
+# reassemble, sha256-verify, encode the segment (libx264 + AAC), ffprobe it,
+# and keep it as a job artifact. Trigger via web ("Run pipeline") or the API
+# with the variables below (same names/defaults as the GitHub workflow).
+# Free tier: 400 compute min/mo on instance (shared) runners.
+
+variables:
+  PARTS: ""
+  SHA256: "295c529a7e60ac31a102a954b54cda45cf899fc5b35d78e797cbecdc5c4468c2"
+  START: "0"
+  DUR: "60"
+  OUT_NAME: "segment.mp4"
+  SCALE: "1280:720"
+  CRF: "34"
+  PRESET: "medium"
+  MAXRATE: "800k"
+  BUFSIZE: "1600k"
+  ABITRATE: "96k"
+
+stages:
+  - encode
+
+encode-segment:
+  stage: encode
+  image: ubuntu:22.04
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'
+  script:
+    - apt-get update -qq && apt-get install -y -qq ffmpeg curl ca-certificates > /dev/null
+    - mkdir -p parts
+    - |
+      i=0
+      for u in $PARTS; do
+        printf -v name "parts/part-%03d" "$i"
+        curl -L --fail -o "$name" "$u"
+        i=$((i+1))
+      done
+      ls -la parts/
+    - cat parts/part-* > master.mp4
+    - echo "$SHA256  master.mp4" | sha256sum -c -
+    - |
+      ffmpeg -y -ss "$START" -i master.mp4 -t "$DUR" \
+        -vf scale="$SCALE" -c:v libx264 -preset "$PRESET" -crf "$CRF" \
+        -maxrate "$MAXRATE" -bufsize "$BUFSIZE" \
+        -c:a aac -b:a "$ABITRATE" "$OUT_NAME"
+    - ffprobe -v error -show_format -show_streams "$OUT_NAME"
+  artifacts:
+    paths:
+      - "$OUT_NAME"
+    expire_in: 3 days
