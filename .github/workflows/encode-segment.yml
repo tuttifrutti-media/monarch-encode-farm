@@ -1,0 +1,50 @@
+name: encode-segment
+on:
+  workflow_dispatch:
+    inputs:
+      parts:
+        description: "Space-separated direct-download URLs of the master parts, in order"
+        required: true
+      sha256:
+        description: "Expected sha256 of the reassembled master"
+        required: true
+      start:
+        description: "Segment start seconds"
+        required: true
+      dur:
+        description: "Segment duration seconds"
+        required: true
+      out_name:
+        description: "Output segment filename"
+        required: true
+jobs:
+  encode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Fetch and reassemble master
+        run: |
+          set -euo pipefail
+          mkdir -p parts
+          i=0
+          for u in ${{ inputs.parts }}; do
+            printf -v n "%03d" $i
+            curl -L --fail --retry 3 -o "parts/$n" "$u"
+            i=$((i+1))
+          done
+          cat parts/* > master.mp4
+          echo "${{ inputs.sha256 }}  master.mp4" | sha256sum -c -
+          ffprobe -v error -show_entries format=duration -of csv=p=0 master.mp4
+      - name: Encode segment (FB 720p profile)
+        run: |
+          set -euo pipefail
+          ffmpeg -y -v error -ss "${{ inputs.start }}" -i master.mp4 -t "${{ inputs.dur }}" \
+            -vf scale=1280:720 -c:v libx264 -preset medium -crf 34 -maxrate 800k -bufsize 1600k \
+            -c:a aac -b:a 96k "${{ inputs.out_name }}"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 "${{ inputs.out_name }}"
+      - name: Upload segment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.out_name }}
+          path: ${{ inputs.out_name }}
+          retention-days: 3
