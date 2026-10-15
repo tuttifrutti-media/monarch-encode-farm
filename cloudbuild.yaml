@@ -22,6 +22,7 @@ substitutions:
   _BUCKET: 'monarch-encode-farm-artifacts'
 options:
   machineType: 'E2_MEDIUM'
+logging: CLOUD_LOGGING_ONLY
 timeout: '3600s'
 steps:
   - id: fetch-parts
