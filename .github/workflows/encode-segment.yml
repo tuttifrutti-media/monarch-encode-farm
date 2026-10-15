@@ -17,6 +17,30 @@ on:
       out_name:
         description: "Output segment filename"
         required: true
+      scale:
+        description: "Output scale WxH (default = FB 720p profile)"
+        required: false
+        default: "1280:720"
+      crf:
+        description: "libx264 CRF"
+        required: false
+        default: "34"
+      preset:
+        description: "libx264 preset"
+        required: false
+        default: "medium"
+      maxrate:
+        description: "libx264 maxrate"
+        required: false
+        default: "800k"
+      bufsize:
+        description: "libx264 bufsize"
+        required: false
+        default: "1600k"
+      abitrate:
+        description: "AAC audio bitrate"
+        required: false
+        default: "96k"
 jobs:
   encode:
     runs-on: ubuntu-latest
@@ -40,13 +64,23 @@ jobs:
           cat parts/* > master.mp4
           echo "${{ inputs.sha256 }}  master.mp4" | sha256sum -c -
           ffprobe -v error -show_entries format=duration -of csv=p=0 master.mp4
-      - name: Encode segment (FB 720p profile)
+      - name: Encode segment
+        env:
+          SEG_START: ${{ inputs.start }}
+          SEG_DUR: ${{ inputs.dur }}
+          SEG_SCALE: ${{ inputs.scale }}
+          SEG_CRF: ${{ inputs.crf }}
+          SEG_PRESET: ${{ inputs.preset }}
+          SEG_MAXRATE: ${{ inputs.maxrate }}
+          SEG_BUFSIZE: ${{ inputs.bufsize }}
+          SEG_ABITRATE: ${{ inputs.abitrate }}
+          SEG_OUT: ${{ inputs.out_name }}
         run: |
           set -euo pipefail
-          ffmpeg -y -v error -ss "${{ inputs.start }}" -i master.mp4 -t "${{ inputs.dur }}" \
-            -vf scale=1280:720 -c:v libx264 -preset medium -crf 34 -maxrate 800k -bufsize 1600k \
-            -c:a aac -b:a 96k "${{ inputs.out_name }}"
-          ffprobe -v error -show_entries format=duration -of csv=p=0 "${{ inputs.out_name }}"
+          ffmpeg -y -v error -ss "$SEG_START" -i master.mp4 -t "$SEG_DUR" \
+            -vf "scale=$SEG_SCALE" -c:v libx264 -preset "$SEG_PRESET" -crf "$SEG_CRF" -maxrate "$SEG_MAXRATE" -bufsize "$SEG_BUFSIZE" \
+            -c:a aac -b:a "$SEG_ABITRATE" "$SEG_OUT"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 "$SEG_OUT"
       - name: Upload segment artifact
         uses: actions/upload-artifact@v4
         with:
