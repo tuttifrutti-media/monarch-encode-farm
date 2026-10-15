@@ -114,7 +114,6 @@ jobs:
             - << pipeline.parameters.out_name >>
       - store_artifacts:
           path: << pipeline.parameters.out_name >>
-          destination: segment
 
 workflows:
   encode-segment:
