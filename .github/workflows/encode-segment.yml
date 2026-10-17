@@ -41,6 +41,18 @@ on:
         description: "AAC audio bitrate"
         required: false
         default: "96k"
+      scale_flags:
+        description: "Optional scale filter flags (e.g. lanczos); empty = ffmpeg default"
+        required: false
+        default: ""
+      extra_vf:
+        description: "Optional extra video filters appended after scale (comma-separated, no leading comma)"
+        required: false
+        default: ""
+      afilter:
+        description: "Optional audio filter chain (empty = no audio filtering). Set maxrate=0 to omit the VBV cap."
+        required: false
+        default: ""
 jobs:
   encode:
     runs-on: ubuntu-latest
@@ -74,11 +86,21 @@ jobs:
           SEG_MAXRATE: ${{ inputs.maxrate }}
           SEG_BUFSIZE: ${{ inputs.bufsize }}
           SEG_ABITRATE: ${{ inputs.abitrate }}
+          SEG_SCALE_FLAGS: ${{ inputs.scale_flags }}
+          SEG_EXTRA_VF: ${{ inputs.extra_vf }}
+          SEG_AFILTER: ${{ inputs.afilter }}
           SEG_OUT: ${{ inputs.out_name }}
         run: |
           set -euo pipefail
+          VF="scale=$SEG_SCALE"
+          if [ -n "$SEG_SCALE_FLAGS" ]; then VF="scale=$SEG_SCALE:flags=$SEG_SCALE_FLAGS"; fi
+          if [ -n "$SEG_EXTRA_VF" ]; then VF="$VF,$SEG_EXTRA_VF"; fi
+          AF_ARGS=()
+          if [ -n "$SEG_AFILTER" ]; then AF_ARGS=(-af "$SEG_AFILTER"); fi
+          VBV_ARGS=()
+          if [ "$SEG_MAXRATE" != "0" ]; then VBV_ARGS=(-maxrate "$SEG_MAXRATE" -bufsize "$SEG_BUFSIZE"); fi
           ffmpeg -y -v error -ss "$SEG_START" -i master.mp4 -t "$SEG_DUR" \
-            -vf "scale=$SEG_SCALE" -c:v libx264 -preset "$SEG_PRESET" -crf "$SEG_CRF" -maxrate "$SEG_MAXRATE" -bufsize "$SEG_BUFSIZE" \
+            -vf "$VF" "${AF_ARGS[@]}" -c:v libx264 -preset "$SEG_PRESET" -crf "$SEG_CRF" "${VBV_ARGS[@]}" \
             -c:a aac -b:a "$SEG_ABITRATE" "$SEG_OUT"
           ffprobe -v error -show_entries format=duration -of csv=p=0 "$SEG_OUT"
       - name: Upload segment artifact
